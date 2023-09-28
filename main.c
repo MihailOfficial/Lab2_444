@@ -23,6 +23,7 @@
 /* USER CODE BEGIN Includes */
 #define ARM_MATH_CM4
 #include "arm_math.h"
+
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -105,8 +106,12 @@ int main(void)
 
 	uint32_t triangle = 0;
 	uint32_t saw = 0;
+
 	uint32_t upT = 1;
 
+	float sine = 0;
+	float sineX = 0;
+	float pi = 3.1415;
 
   while (1)
   {
@@ -123,20 +128,20 @@ int main(void)
 
 	if (saw < 10){
 		saw += 1;
-		HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_2, DAC_ALIGN_12B_R, 9000*saw);
+//		HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_2, DAC_ALIGN_12B_R, 9000*saw);
 	} else {
 		saw = 0;
-		HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_2, DAC_ALIGN_12B_R, 9000*saw);
+//		HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_2, DAC_ALIGN_12B_R, 9000*saw);
 	}
 
 	if (upT == 1){
 		triangle += 1;
-	//	  		HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_2, DAC_ALIGN_12B_R, 9000*triangle);
+//		HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_2, DAC_ALIGN_12B_R, 9000*triangle);
 	}
 
 	else if (upT == 0){
 		triangle -= 1;
-	//	  		HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_2, DAC_ALIGN_12B_R, 9000*triangle);
+//		HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_2, DAC_ALIGN_12B_R, 9000*triangle);
 	}
 
 	if (triangle == 0){
@@ -147,7 +152,23 @@ int main(void)
 		upT = 0;
 	}
 
-	HAL_Delay(100);
+	sine = 1 + arm_sin_f32(sineX/8.0 * pi);
+
+	sineX += 1;
+	if (sineX > 32.0){
+		sineX = 0.0;
+	}
+
+
+
+//	if (sineX > 2){
+//		sineX = 0;
+//	}
+
+	HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_2, DAC_ALIGN_12B_R, 9000*sine);
+
+
+	HAL_Delay(1);
 
 
   }
