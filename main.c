@@ -33,6 +33,9 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+#define VREFINT_MEM (uint16_t*) 0x1FFF75AA
+#define TS_CAL1_MEM (uint16_t*) 0x1FFF75A8
+#define TS_CAL2_MEM (uint16_t*) 0x1FFF75CA
 
 /* USER CODE END PD */
 
@@ -42,6 +45,8 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
+ADC_HandleTypeDef hadc1;
+
 DAC_HandleTypeDef hdac1;
 
 TIM_HandleTypeDef htim2;
@@ -55,8 +60,9 @@ void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_TIM2_Init(void);
 static void MX_DAC1_Init(void);
+static void MX_ADC1_Init(void);
 /* USER CODE BEGIN PFP */
-
+uint32_t reading;
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -93,6 +99,7 @@ int main(void)
   MX_GPIO_Init();
   MX_TIM2_Init();
   MX_DAC1_Init();
+  MX_ADC1_Init();
   /* USER CODE BEGIN 2 */
 //  start timer
 //  HAL_TIM_Base_Start_IT(&htim2);
@@ -113,6 +120,8 @@ int main(void)
 	float sineX = 0;
 	float pi = 3.1415;
 
+	HAL_ADCEx_Calibration_Start(&hadc1, ADC_SINGLE_ENDED);
+
   while (1)
   {
     /* USER CODE END WHILE */
@@ -128,7 +137,7 @@ int main(void)
 
 	if (saw < 10){
 		saw += 1;
-//		HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_2, DAC_ALIGN_12B_R, 9000*saw);
+//		AL_DAC_SetValue(&hdac1, DAC_CHANNEL_2, DAC_ALIGN_12B_R, 9000*saw);
 	} else {
 		saw = 0;
 //		HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_2, DAC_ALIGN_12B_R, 9000*saw);
@@ -153,20 +162,44 @@ int main(void)
 	}
 
 	sine = 1 + arm_sin_f32(sineX/8.0 * pi);
-
 	sineX += 1;
 	if (sineX > 32.0){
 		sineX = 0.0;
 	}
+//	HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_2, DAC_ALIGN_12B_R, 9000*sine);
 
 
+	//Temperature code:
+	uint32_t rawRes = 0;
+	uint32_t convRes = 0;
+	ADC_ChannelConfTypeDef sConfig = {0}; // sConfig from manual
+	//start converter
 
-//	if (sineX > 2){
-//		sineX = 0;
-//	}
+	sConfig.Channel = ADC_CHANNEL_VREFINT;
+	sConfig.SamplingTime = ADC_SAMPLETIME_247CYCLES_5;
+	if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK) Error_Handler();
 
-	HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_2, DAC_ALIGN_12B_R, 9000*sine);
+	//get reference voltage
+	HAL_ADC_Start(&hadc1);
+	while (HAL_ADC_PollForConversion(&hadc1, HAL_MAX_DELAY) != HAL_OK) {}
+	rawRes = HAL_ADC_GetValue(&hadc1);
+	HAL_ADC_Stop(&hadc1);
+	convRes = __HAL_ADC_CALC_VREFANALOG_VOLTAGE(rawRes, ADC_RESOLUTION_12B);
 
+	//configure ADC for temp
+	sConfig.Channel = ADC_CHANNEL_TEMPSENSOR;
+	sConfig.SamplingTime = ADC_SAMPLETIME_640CYCLES_5;
+	if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK) Error_Handler();
+
+	//get temperature
+	HAL_ADC_Start(&hadc1);
+	while (HAL_ADC_PollForConversion(&hadc1, HAL_MAX_DELAY) != HAL_OK) {}
+	rawRes = HAL_ADC_GetValue(&hadc1);
+	HAL_ADC_Stop(&hadc1);
+
+	float diffCal = *TS_CAL2_MEM - *TS_CAL1_MEM;
+
+	float finalTemp = ((130.0-30.0)/diffCal) * ((convRes/3000.0) * rawRes - (int) *TS_CAL1_MEM) + 30.0;
 
 	HAL_Delay(1);
 
@@ -223,6 +256,64 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
+}
+
+/**
+  * @brief ADC1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_ADC1_Init(void)
+{
+
+  /* USER CODE BEGIN ADC1_Init 0 */
+
+  /* USER CODE END ADC1_Init 0 */
+
+  ADC_ChannelConfTypeDef sConfig = {0};
+
+  /* USER CODE BEGIN ADC1_Init 1 */
+
+  /* USER CODE END ADC1_Init 1 */
+
+  /** Common config
+  */
+  hadc1.Instance = ADC1;
+  hadc1.Init.ClockPrescaler = ADC_CLOCK_ASYNC_DIV1;
+  hadc1.Init.Resolution = ADC_RESOLUTION_12B;
+  hadc1.Init.DataAlign = ADC_DATAALIGN_RIGHT;
+  hadc1.Init.ScanConvMode = ADC_SCAN_DISABLE;
+  hadc1.Init.EOCSelection = ADC_EOC_SINGLE_CONV;
+  hadc1.Init.LowPowerAutoWait = DISABLE;
+  hadc1.Init.ContinuousConvMode = DISABLE;
+  hadc1.Init.NbrOfConversion = 1;
+  hadc1.Init.DiscontinuousConvMode = DISABLE;
+  hadc1.Init.ExternalTrigConv = ADC_SOFTWARE_START;
+  hadc1.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_NONE;
+  hadc1.Init.DMAContinuousRequests = DISABLE;
+  hadc1.Init.Overrun = ADC_OVR_DATA_PRESERVED;
+  hadc1.Init.OversamplingMode = DISABLE;
+  if (HAL_ADC_Init(&hadc1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure Regular Channel
+  */
+  sConfig.Channel = ADC_CHANNEL_TEMPSENSOR;
+  sConfig.Rank = ADC_REGULAR_RANK_1;
+  sConfig.SamplingTime = ADC_SAMPLETIME_2CYCLES_5;
+  sConfig.SingleDiff = ADC_SINGLE_ENDED;
+  sConfig.OffsetNumber = ADC_OFFSET_NONE;
+  sConfig.Offset = 0;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN ADC1_Init 2 */
+
+  /* USER CODE END ADC1_Init 2 */
+
 }
 
 /**
