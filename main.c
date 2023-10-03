@@ -67,6 +67,7 @@ uint32_t reading;
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+enum State { LED_OFF, LED_ON };
 /* USER CODE END 0 */
 
 /**
@@ -107,20 +108,21 @@ int main(void)
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-
   	HAL_DAC_Start(&hdac1, DAC_CHANNEL_1);
 	HAL_DAC_Start(&hdac1, DAC_CHANNEL_2);
 
 	uint32_t triangle = 0;
 	uint32_t saw = 0;
-
 	uint32_t upT = 1;
-
+	uint32_t counter = 0;
 	float sine = 0;
 	float sineX = 0;
 	float pi = 3.1415;
 
+	int init = 0;
 	HAL_ADCEx_Calibration_Start(&hadc1, ADC_SINGLE_ENDED);
+
+	enum State state = LED_OFF;
 
   while (1)
   {
@@ -128,55 +130,54 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
 
-	// turn LED ON on button press
-	if (HAL_GPIO_ReadPin(BUTTON_GPIO_Port, BUTTON_Pin) == 0) {
-	  HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, GPIO_PIN_SET);
-	} else {
-	  HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, GPIO_PIN_RESET);
-	}
+
+	  if (HAL_GPIO_ReadPin(BUTTON_GPIO_Port, BUTTON_Pin) == GPIO_PIN_RESET) {
+		  init += 1;
+		  if (state == LED_OFF) {
+			  // Turn the LED ON
+			  HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, GPIO_PIN_SET);
+			  state = LED_ON;
+		  } else {
+			  // Turn the LED OFF
+			  HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, GPIO_PIN_RESET);
+			  state = LED_OFF;
+		  }
+
+		  while (HAL_GPIO_ReadPin(BUTTON_GPIO_Port, BUTTON_Pin) == GPIO_PIN_RESET) {
+			  //stall
+		  }
+	 }
+
 
 	if (saw < 10){
 		saw += 1;
-//		AL_DAC_SetValue(&hdac1, DAC_CHANNEL_2, DAC_ALIGN_12B_R, 9000*saw);
+
 	} else {
 		saw = 0;
-//		HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_2, DAC_ALIGN_12B_R, 9000*saw);
+
 	}
 
 	if (upT == 1){
 		triangle += 1;
-//		HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_2, DAC_ALIGN_12B_R, 9000*triangle);
 	}
-
 	else if (upT == 0){
 		triangle -= 1;
-//		HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_2, DAC_ALIGN_12B_R, 9000*triangle);
 	}
 
 	if (triangle == 0){
 		upT = 1;
 	}
-
-	if (triangle == 10){
+	else if (triangle == 10){
 		upT = 0;
 	}
-
-	sine = 1 + arm_sin_f32(sineX/8.0 * pi);
-	sineX += 1;
-	if (sineX > 32.0){
-		sineX = 0.0;
-	}
-//	HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_2, DAC_ALIGN_12B_R, 9000*sine);
-
 
 	//Temperature code:
 	uint32_t rawRes = 0;
 	uint32_t convRes = 0;
 	ADC_ChannelConfTypeDef sConfig = {0}; // sConfig from manual
 	//start converter
-
 	sConfig.Channel = ADC_CHANNEL_VREFINT;
-	sConfig.SamplingTime = ADC_SAMPLETIME_247CYCLES_5;
+	sConfig.SamplingTime = ADC_SAMPLETIME_640CYCLES_5;
 	if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK) Error_Handler();
 
 	//get reference voltage
@@ -201,7 +202,37 @@ int main(void)
 
 	float finalTemp = ((130.0-30.0)/diffCal) * ((convRes/3000.0) * rawRes - (int) *TS_CAL1_MEM) + 30.0;
 
-	HAL_Delay(1);
+	//sine code
+	sine = 1 + arm_sin_f32(sineX/8.0 * pi);
+	sineX += 1;
+	if (sineX > 32.0){
+		sineX = 0.0;
+	}
+
+
+	// determine what speaker should play
+	if (init == 0){
+		HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_2, DAC_ALIGN_12B_R, 5000*saw);
+	}
+
+	if (init != 0){
+		if (state == LED_ON){
+			HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_2, DAC_ALIGN_12B_R, finalTemp * sine * 3000 );
+		} else if (state == LED_OFF){
+			if (counter < 2000){
+				HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_2, DAC_ALIGN_12B_R, 5000*sine);
+			} else if (counter > 2000 && counter < 4000){
+				HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_2, DAC_ALIGN_12B_R, 5000*triangle);
+			} else if (counter > 4000 && counter < 6000){
+				HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_2, DAC_ALIGN_12B_R, 5000*saw);
+			} else if (counter > 6000){
+				counter = 0;
+			}
+		}
+	}
+
+  counter += 1;
+//	HAL_Delay(100);
 
 
   }
