@@ -69,19 +69,6 @@ uint32_t reading;
 /* USER CODE BEGIN 0 */
 enum State { LED_OFF, LED_ON };
 
-float calculateTemperature(uint32_t rawADCValue) {
-    // The following constants are specific to STM32F4xx series
-    float V25 = 0.76f;  // V25 voltage at 25°C (in volts)
-    float Avg_Slope = 0.0025f;  // Average slope of temperature vs. voltage (in volts per degree Celsius)
-
-    // Calculate the temperature in Celsius
-    float voltage = (rawADCValue * 3.3f) / 4095;  // Assuming a 12-bit ADC
-    float temp = ((voltage - V25) / Avg_Slope) + 25.0f;
-
-    return temp;
-}
-
-
 /* USER CODE END 0 */
 
 /**
@@ -97,7 +84,8 @@ int main(void)
   /* MCU Configuration--------------------------------------------------------*/
 
   /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
-  HAL_Init();
+
+	HAL_Init();
 
   /* USER CODE BEGIN Init */
 
@@ -127,7 +115,7 @@ int main(void)
 
 	uint32_t triangle = 0;
 	uint32_t saw = 0;
-	uint32_t upT = 1;
+	int8_t direction = 1;
 	uint32_t counter = 0;
 	float sine = 0;
 	float sineX = 0;
@@ -137,6 +125,7 @@ int main(void)
 	HAL_ADCEx_Calibration_Start(&hadc1, ADC_SINGLE_ENDED);
 
 	enum State state = LED_OFF;
+
 
   while (1)
   {
@@ -163,62 +152,57 @@ int main(void)
 	 }
 
 
-	if (saw < 10){
-		saw += 1;
+	saw += 1;
 
-	} else {
+	if (saw > 8){
 		saw = 0;
 
 	}
 
-	if (upT == 1){
-		triangle += 1;
-	}
-	else if (upT == 0){
-		triangle -= 1;
-	}
+	 triangle += direction;
 
-	if (triangle == 0){
-		upT = 1;
-	}
-	else if (triangle == 10){
-		upT = 0;
+	// Change direction when the maximum or minimum is reached
+	if (triangle > 10) {
+		direction = -1;
+	} else if (triangle <= 0) {
+		direction = 1;
 	}
 
 	//Temperature code:
-	uint32_t rawRes = 0;
+	uint32_t rawResCal = 0;
+	uint32_t rawResTemp = 0;
 	uint32_t convRes = 0;
 	ADC_ChannelConfTypeDef sConfig = {0}; // sConfig from manual
-
 	//start converter
+
 	sConfig.Channel = ADC_CHANNEL_VREFINT;
-	sConfig.SamplingTime = ADC_SAMPLETIME_640CYCLES_5;
+	sConfig.SamplingTime = ADC_SAMPLETIME_247CYCLES_5;
 	if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK) Error_Handler();
 
 	//get reference voltage
 	HAL_ADC_Start(&hadc1);
-	while (HAL_ADC_PollForConversion(&hadc1, HAL_MAX_DELAY) != HAL_OK) { /* stall */ }
-	rawRes = HAL_ADC_GetValue(&hadc1);
+	while (HAL_ADC_PollForConversion(&hadc1, HAL_MAX_DELAY) != HAL_OK) {}
+	rawResCal = HAL_ADC_GetValue(&hadc1);
+	float VREF = __HAL_ADC_CALC_VREFANALOG_VOLTAGE(rawResCal, ADC_RESOLUTION_12B);
 	HAL_ADC_Stop(&hadc1);
 
-	// 12 bits
-	convRes = __HAL_ADC_CALC_VREFANALOG_VOLTAGE(rawRes, ADC_RESOLUTION_12B);
-
 	//configure ADC for temp
-	// Sampling Time (ms) = (Number of Cycles / ADC Clock Frequency)
 	sConfig.Channel = ADC_CHANNEL_TEMPSENSOR;
 	sConfig.SamplingTime = ADC_SAMPLETIME_640CYCLES_5;
-	while (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK) Error_Handler();
+	if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK) Error_Handler();
 
 	//get temperature
 	HAL_ADC_Start(&hadc1);
-	while (HAL_ADC_PollForConversion(&hadc1, HAL_MAX_DELAY) != HAL_OK) {/* stall */}
-	rawRes = HAL_ADC_GetValue(&hadc1);
+	while (HAL_ADC_PollForConversion(&hadc1, HAL_MAX_DELAY) != HAL_OK) {}
+	rawResTemp = HAL_ADC_GetValue(&hadc1);
 	HAL_ADC_Stop(&hadc1);
 
+	uint16_t TS_CAL1 = *TS_CAL1_MEM;
+	uint16_t TS_CAL2 = *TS_CAL2_MEM;
 
-	float temperatureCelsius = calculateTemperature(rawRes);
+	int diffCal = TS_CAL2 - TS_CAL1;
 
+	float temperatureCelsius = (130.0 - 30.0)/diffCal * (rawResTemp *(VREF/3000.0) - TS_CAL1) + 30.0;
 
 	//sine code
 	sine = 1 + arm_sin_f32(sineX * pi);
@@ -231,27 +215,33 @@ int main(void)
 
 	// determine what speaker should play
 	if (init == 0){
-		HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_2, DAC_ALIGN_12B_R, 5000*saw);
+		HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_2, DAC_ALIGN_12B_R, 2000*sine);
+
 	}
 
 	if (init != 0){
 		if (state == LED_ON){
-			HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_2, DAC_ALIGN_12B_R,  sine * 50 * temperatureCelsius);
+			HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_2, DAC_ALIGN_12B_R,  sine * 30 * temperatureCelsius);
 		} else if (state == LED_OFF){
 			if (counter < 2000){
-				HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_2, DAC_ALIGN_12B_R,  sine * 250);
+				HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_2, DAC_ALIGN_12B_R, sine*2000);
 			} else if (counter > 2000 && counter < 4000){
-				HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_2, DAC_ALIGN_12B_R, 5000*triangle);
+				HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_2, DAC_ALIGN_12B_R, 300*triangle);
 			} else if (counter > 4000 && counter < 6000){
-				HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_2, DAC_ALIGN_12B_R, 5000*saw);
+				HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_2, DAC_ALIGN_12B_R, 500*saw);
 			} else if (counter > 6000){
 				counter = 0;
 			}
 		}
 	}
 
+
+
+
+
+
   counter += 1;
-//	HAL_Delay(100);
+	HAL_Delay(1);
 
 
   }
