@@ -115,6 +115,7 @@ int main(void)
 
 	uint32_t triangle = 0;
 	uint32_t saw = 0;
+	uint32_t resetSaw = 0;
 	int8_t direction = 1;
 	uint32_t counter = 0;
 	float sine = 0;
@@ -152,12 +153,22 @@ int main(void)
 	 }
 
 
-	saw += 1;
+
+	if (resetSaw == 0){
+		saw += 1;
+	} else {
+		resetSaw = 0;
+	}
 
 	if (saw > 8){
 		saw = 0;
+		resetSaw = 1;
 
 	}
+
+
+
+
 
 	 triangle += direction;
 
@@ -173,8 +184,8 @@ int main(void)
 	uint32_t rawResTemp = 0;
 	uint32_t convRes = 0;
 	ADC_ChannelConfTypeDef sConfig = {0}; // sConfig from manual
-	//start converter
 
+	//start converter
 	sConfig.Channel = ADC_CHANNEL_VREFINT;
 	sConfig.SamplingTime = ADC_SAMPLETIME_247CYCLES_5;
 	if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK) Error_Handler();
@@ -241,7 +252,8 @@ int main(void)
 
 
   counter += 1;
-	HAL_Delay(1);
+
+  HAL_Delay(1);
 
 
   }
