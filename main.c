@@ -1,20 +1,20 @@
 /* USER CODE BEGIN Header */
 /**
-  ******************************************************************************
-  * @file           : main.c
-  * @brief          : Main program body
-  ******************************************************************************
-  * @attention
-  *
-  * Copyright (c) 2023 STMicroelectronics.
-  * All rights reserved.
-  *
-  * This software is licensed under terms that can be found in the LICENSE file
-  * in the root directory of this software component.
-  * If no LICENSE file comes with this software, it is provided AS-IS.
-  *
-  ******************************************************************************
-  */
+ ******************************************************************************
+ * @file           : main.c
+ * @brief          : Main program body
+ ******************************************************************************
+ * @attention
+ *
+ * Copyright (c) 2023 STMicroelectronics.
+ * All rights reserved.
+ *
+ * This software is licensed under terms that can be found in the LICENSE file
+ * in the root directory of this software component.
+ * If no LICENSE file comes with this software, it is provided AS-IS.
+ *
+ ******************************************************************************
+ */
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
@@ -33,9 +33,6 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define VREFINT_MEM (uint16_t*) 0x1FFF75AA
-#define TS_CAL1_MEM (uint16_t*) 0x1FFF75A8
-#define TS_CAL2_MEM (uint16_t*) 0x1FFF75CA
 
 /* USER CODE END PD */
 
@@ -48,26 +45,169 @@
 ADC_HandleTypeDef hadc1;
 
 DAC_HandleTypeDef hdac1;
+DMA_HandleTypeDef hdma_dac1_ch1;
+
+DFSDM_Filter_HandleTypeDef hdfsdm1_filter0;
+DFSDM_Channel_HandleTypeDef hdfsdm1_channel2;
+DMA_HandleTypeDef hdma_dfsdm1_flt0;
 
 TIM_HandleTypeDef htim2;
 
 /* USER CODE BEGIN PV */
+enum State { LED_OFF, LED_ON };
+enum State state = LED_OFF;
+
+uint32_t sineWaveA[20];
+uint32_t sineWaveB[40];
+uint32_t sineWaveC[80];
+uint32_t sineWaveD[160];
+uint32_t sineWaveE[320];
+uint32_t sineWaveF[640];
+
+int playback = 0;
+
+int lenvoice = 65000;
+int32_t voice[65000];
+uint32_t voiceR[65000];
+
+uint32_t timeCounter = 0;
+uint32_t waveSelector = 0;
+
+uint32_t blinkCount = 0;
+uint32_t blinking = 0;
+
+uint32_t playRecorded = 0;
+uint32_t statusProgram = 0;
 
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
+static void MX_DMA_Init(void);
 static void MX_TIM2_Init(void);
 static void MX_DAC1_Init(void);
 static void MX_ADC1_Init(void);
+static void MX_DFSDM1_Init(void);
 /* USER CODE BEGIN PFP */
-uint32_t reading;
+
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-enum State { LED_OFF, LED_ON };
+
+// We used ChatGPT for reference for some of the code
+
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
+
+  if (GPIO_Pin == PIN_BUTTON_Pin) {
+
+	  	if (statusProgram == 0){
+			HAL_DAC_Stop_DMA(&hdac1, DAC_CHANNEL_1);
+			blinking = 1;
+			HAL_DFSDM_FilterRegularStart_DMA(&hdfsdm1_filter0, voice, lenvoice);
+	  	} else {
+	  		playback = 1;
+	  		statusProgram = 0;
+	  	 }
+  }
+}
+
+
+// once voice has been played, DAC returns here
+void HAL_DAC_ConvCpltCallbackCh1(DAC_HandleTypeDef *hdac) {
+	if (playRecorded == 1){
+		HAL_DAC_Stop_DMA(&hdac1, DAC_CHANNEL_1);
+		HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, GPIO_PIN_RESET);
+		playRecorded = 0;
+	}
+}
+
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
+
+		if (blinking == 1){
+
+			blinkCount += 2;
+
+			if (blinkCount % 10000 == 0){
+
+				if (state == LED_OFF){
+					HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, GPIO_PIN_SET);
+					state = LED_ON;
+				} else if (state == LED_ON){
+					HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, GPIO_PIN_RESET);
+					state = LED_OFF;
+				}
+			}
+		}
+
+		if (playback == 1){
+
+			timeCounter += 2;
+
+			if (timeCounter % 90000 == 0) {
+
+				HAL_DAC_Stop_DMA(&hdac1, DAC_CHANNEL_1);
+
+				// Switch the DMA source array
+				if (waveSelector == 6) {
+					HAL_DAC_Start_DMA(&hdac1, DAC_CHANNEL_1, &voiceR, lenvoice, DAC_ALIGN_12B_R);
+					playRecorded = 1;
+					playback = 0;
+				}
+				if (waveSelector == 5) {
+					HAL_DAC_Start_DMA(&hdac1, DAC_CHANNEL_1, sineWaveF, 640, DAC_ALIGN_12B_R);
+				} else if (waveSelector == 4) {
+					HAL_DAC_Start_DMA(&hdac1, DAC_CHANNEL_1, sineWaveE, 320, DAC_ALIGN_12B_R);
+				} else if (waveSelector == 3) {
+					HAL_DAC_Start_DMA(&hdac1, DAC_CHANNEL_1, sineWaveD, 160, DAC_ALIGN_12B_R);
+				} else if (waveSelector == 2) {
+					HAL_DAC_Start_DMA(&hdac1, DAC_CHANNEL_1, sineWaveC, 80, DAC_ALIGN_12B_R);
+				} else if (waveSelector == 1) {
+					HAL_DAC_Start_DMA(&hdac1, DAC_CHANNEL_1, sineWaveB, 40, DAC_ALIGN_12B_R);
+				} else {
+					HAL_DAC_Start_DMA(&hdac1, DAC_CHANNEL_1, sineWaveA, 20, DAC_ALIGN_12B_R);
+				}
+
+				waveSelector = (waveSelector + 1) % 7;
+			}
+        }
+}
+
+void HAL_DFSDM_FilterRegConvCpltCallback (DFSDM_Filter_HandleTypeDef * hdfsdm_filter) {
+
+	int32_t max = -2147483648;
+	int32_t min = 2147483647;
+
+	if(hdfsdm_filter == &hdfsdm1_filter0) {
+
+		HAL_DFSDM_FilterRegularStop_DMA(&hdfsdm1_filter0);
+
+		for(int i = 0; i < lenvoice; i++){
+
+			voice[i] = voice[i] >> 9; // first 8 bits are channel info, needs to be discarded. One more to remove noise
+
+			if(voice[i] > max) max = voice[i];
+			if(voice[i] < min) min = voice[i];
+
+		}
+
+		if(min < 0) min = min * (-1);
+
+		float scaler = (3000.0 / ((float) min + (float) max)); // maximum for DAC / range of values to find scaling factor
+
+		for(int i = 0; i < lenvoice; i++){
+			voice[i] = voice[i] + min; // set minimum mic value to 0
+			voiceR[i] = (uint32_t) scaler * voice[i]; // scale values to range 0 -> 4096
+		}
+
+		blinking = 0;
+
+		HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, GPIO_PIN_SET);
+		statusProgram = 1;
+
+	}
+}
 
 /* USER CODE END 0 */
 
@@ -84,8 +224,7 @@ int main(void)
   /* MCU Configuration--------------------------------------------------------*/
 
   /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
-
-	HAL_Init();
+  HAL_Init();
 
   /* USER CODE BEGIN Init */
 
@@ -100,162 +239,38 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  MX_DMA_Init();
   MX_TIM2_Init();
   MX_DAC1_Init();
   MX_ADC1_Init();
+  MX_DFSDM1_Init();
   /* USER CODE BEGIN 2 */
-//  start timer
-//  HAL_TIM_Base_Start_IT(&htim2);
+  //  start timer
+  HAL_TIM_Base_Start_IT(&htim2);
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  	HAL_DAC_Start(&hdac1, DAC_CHANNEL_1);
-	HAL_DAC_Start(&hdac1, DAC_CHANNEL_2);
 
-	uint32_t triangle = 0;
-	uint32_t saw = 0;
-	uint32_t resetSaw = 0;
-	int8_t direction = 1;
-	uint32_t counter = 0;
-	float sine = 0;
-	float sineX = 0;
-	float pi = 3.1415;
+	float period = 2.0;
+	float pi = 3.14;
 
-	int init = 0;
-	HAL_ADCEx_Calibration_Start(&hadc1, ADC_SINGLE_ENDED);
+	for (int i = 0; i < 640; i++) {
 
-	enum State state = LED_OFF;
+		if (i < 20) sineWaveA[i] = (uint32_t) roundf((1.0 + arm_sin_f32( (float) (pi * i) / (period * 2))) * 1000);
+		if (i < 40) sineWaveB[i] = (uint32_t) roundf((1.0 + arm_sin_f32( (float) (pi * i) / (period * 3))) * 1000);
+		if (i < 80) sineWaveC[i] = (uint32_t) roundf((1.0 + arm_sin_f32( (float) (pi * i) / (period * 4))) * 1000);
+		if (i < 160) sineWaveD[i] = (uint32_t) roundf((1.0 + arm_sin_f32( (float)(pi * i) / (period * 5))) * 1000);
+		if (i < 320) sineWaveE[i] = (uint32_t) roundf((1.0 + arm_sin_f32( (float)(pi * i) / (period * 6))) * 1000);
+		if (i < 640) sineWaveF[i] = (uint32_t) roundf((1.0 + arm_sin_f32( (float)(pi * i) / (period * 7))) * 1000);
 
+    }
 
   while (1)
   {
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-
-	  // button is pressed
-	  if (HAL_GPIO_ReadPin(BUTTON_GPIO_Port, BUTTON_Pin) == GPIO_PIN_RESET) {
-		  init += 1;
-		  if (state == LED_OFF) {
-			  // Turn the LED ON
-			  HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, GPIO_PIN_SET);
-			  state = LED_ON;
-		  } else {
-			  // Turn the LED OFF
-			  HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, GPIO_PIN_RESET);
-			  state = LED_OFF;
-		  }
-
-		  while (HAL_GPIO_ReadPin(BUTTON_GPIO_Port, BUTTON_Pin) == GPIO_PIN_RESET) {
-			  //stall
-		  }
-	 }
-
-
-
-	if (resetSaw == 0){
-		saw += 1;
-	} else {
-		resetSaw = 0;
-	}
-
-	if (saw > 8){
-		saw = 0;
-		resetSaw = 1;
-
-	}
-
-
-
-
-
-	 triangle += direction;
-
-	// Change direction when the maximum or minimum is reached
-	if (triangle > 10) {
-		direction = -1;
-	} else if (triangle <= 0) {
-		direction = 1;
-	}
-
-	//Temperature code:
-	uint32_t rawResCal = 0;
-	uint32_t rawResTemp = 0;
-	uint32_t convRes = 0;
-	ADC_ChannelConfTypeDef sConfig = {0}; // sConfig from manual
-
-	//start converter
-	sConfig.Channel = ADC_CHANNEL_VREFINT;
-	sConfig.SamplingTime = ADC_SAMPLETIME_247CYCLES_5;
-	if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK) Error_Handler();
-
-	//get reference voltage
-	HAL_ADC_Start(&hadc1);
-	while (HAL_ADC_PollForConversion(&hadc1, HAL_MAX_DELAY) != HAL_OK) {}
-	rawResCal = HAL_ADC_GetValue(&hadc1);
-	float VREF = __HAL_ADC_CALC_VREFANALOG_VOLTAGE(rawResCal, ADC_RESOLUTION_12B);
-	HAL_ADC_Stop(&hadc1);
-
-	//configure ADC for temp
-	sConfig.Channel = ADC_CHANNEL_TEMPSENSOR;
-	sConfig.SamplingTime = ADC_SAMPLETIME_640CYCLES_5;
-	if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK) Error_Handler();
-
-	//get temperature
-	HAL_ADC_Start(&hadc1);
-	while (HAL_ADC_PollForConversion(&hadc1, HAL_MAX_DELAY) != HAL_OK) {}
-	rawResTemp = HAL_ADC_GetValue(&hadc1);
-	HAL_ADC_Stop(&hadc1);
-
-	uint16_t TS_CAL1 = *TS_CAL1_MEM;
-	uint16_t TS_CAL2 = *TS_CAL2_MEM;
-
-	int diffCal = TS_CAL2 - TS_CAL1;
-
-	float temperatureCelsius = (130.0 - 30.0)/diffCal * (rawResTemp *(VREF/3000.0) - TS_CAL1) + 30.0;
-
-	//sine code
-	sine = 1 + arm_sin_f32(sineX * pi);
-	sineX += 0.1;
-
-	if (isinf(sineX)){
-		sineX = 0;
-	}
-
-
-	// determine what speaker should play
-	if (init == 0){
-		HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_2, DAC_ALIGN_12B_R, 2000*sine);
-
-	}
-
-	if (init != 0){
-		if (state == LED_ON){
-			HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_2, DAC_ALIGN_12B_R,  sine * 30 * temperatureCelsius);
-		} else if (state == LED_OFF){
-			if (counter < 2000){
-				HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_2, DAC_ALIGN_12B_R, sine*2000);
-			} else if (counter > 2000 && counter < 4000){
-				HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_2, DAC_ALIGN_12B_R, 300*triangle);
-			} else if (counter > 4000 && counter < 6000){
-				HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_2, DAC_ALIGN_12B_R, 500*saw);
-			} else if (counter > 6000){
-				counter = 0;
-			}
-		}
-	}
-
-
-
-
-
-
-  counter += 1;
-
-  HAL_Delay(1);
-
-
   }
   /* USER CODE END 3 */
 }
@@ -397,7 +412,7 @@ static void MX_DAC1_Init(void)
   /** DAC channel OUT1 config
   */
   sConfig.DAC_SampleAndHold = DAC_SAMPLEANDHOLD_DISABLE;
-  sConfig.DAC_Trigger = DAC_TRIGGER_NONE;
+  sConfig.DAC_Trigger = DAC_TRIGGER_T2_TRGO;
   sConfig.DAC_HighFrequency = DAC_HIGH_FREQUENCY_INTERFACE_MODE_ABOVE_80MHZ;
   sConfig.DAC_OutputBuffer = DAC_OUTPUTBUFFER_ENABLE;
   sConfig.DAC_ConnectOnChipPeripheral = DAC_CHIPCONNECT_DISABLE;
@@ -409,6 +424,7 @@ static void MX_DAC1_Init(void)
 
   /** DAC channel OUT2 config
   */
+  sConfig.DAC_Trigger = DAC_TRIGGER_NONE;
   if (HAL_DAC_ConfigChannel(&hdac1, &sConfig, DAC_CHANNEL_2) != HAL_OK)
   {
     Error_Handler();
@@ -416,6 +432,59 @@ static void MX_DAC1_Init(void)
   /* USER CODE BEGIN DAC1_Init 2 */
 
   /* USER CODE END DAC1_Init 2 */
+
+}
+
+/**
+  * @brief DFSDM1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_DFSDM1_Init(void)
+{
+
+  /* USER CODE BEGIN DFSDM1_Init 0 */
+
+  /* USER CODE END DFSDM1_Init 0 */
+
+  /* USER CODE BEGIN DFSDM1_Init 1 */
+
+  /* USER CODE END DFSDM1_Init 1 */
+  hdfsdm1_filter0.Instance = DFSDM1_Filter0;
+  hdfsdm1_filter0.Init.RegularParam.Trigger = DFSDM_FILTER_SW_TRIGGER;
+  hdfsdm1_filter0.Init.RegularParam.FastMode = ENABLE;
+  hdfsdm1_filter0.Init.RegularParam.DmaMode = ENABLE;
+  hdfsdm1_filter0.Init.FilterParam.SincOrder = DFSDM_FILTER_SINC3_ORDER;
+  hdfsdm1_filter0.Init.FilterParam.Oversampling = 59;
+  hdfsdm1_filter0.Init.FilterParam.IntOversampling = 1;
+  if (HAL_DFSDM_FilterInit(&hdfsdm1_filter0) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  hdfsdm1_channel2.Instance = DFSDM1_Channel2;
+  hdfsdm1_channel2.Init.OutputClock.Activation = ENABLE;
+  hdfsdm1_channel2.Init.OutputClock.Selection = DFSDM_CHANNEL_OUTPUT_CLOCK_SYSTEM;
+  hdfsdm1_channel2.Init.OutputClock.Divider = 50;
+  hdfsdm1_channel2.Init.Input.Multiplexer = DFSDM_CHANNEL_EXTERNAL_INPUTS;
+  hdfsdm1_channel2.Init.Input.DataPacking = DFSDM_CHANNEL_STANDARD_MODE;
+  hdfsdm1_channel2.Init.Input.Pins = DFSDM_CHANNEL_SAME_CHANNEL_PINS;
+  hdfsdm1_channel2.Init.SerialInterface.Type = DFSDM_CHANNEL_SPI_RISING;
+  hdfsdm1_channel2.Init.SerialInterface.SpiClock = DFSDM_CHANNEL_SPI_CLOCK_INTERNAL;
+  hdfsdm1_channel2.Init.Awd.FilterOrder = DFSDM_CHANNEL_FASTSINC_ORDER;
+  hdfsdm1_channel2.Init.Awd.Oversampling = 1;
+  hdfsdm1_channel2.Init.Offset = 0;
+  hdfsdm1_channel2.Init.RightBitShift = 0x00;
+  if (HAL_DFSDM_ChannelInit(&hdfsdm1_channel2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_DFSDM_FilterConfigRegChannel(&hdfsdm1_filter0, DFSDM_CHANNEL_2, DFSDM_CONTINUOUS_CONV_ON) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN DFSDM1_Init 2 */
+
+  /* USER CODE END DFSDM1_Init 2 */
 
 }
 
@@ -438,7 +507,7 @@ static void MX_TIM2_Init(void)
 
   /* USER CODE END TIM2_Init 1 */
   htim2.Instance = TIM2;
-  htim2.Init.Prescaler = 40000;
+  htim2.Init.Prescaler = 0;
   htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
   htim2.Init.Period = 3000;
   htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
@@ -452,7 +521,7 @@ static void MX_TIM2_Init(void)
   {
     Error_Handler();
   }
-  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_UPDATE;
   sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
   if (HAL_TIMEx_MasterConfigSynchronization(&htim2, &sMasterConfig) != HAL_OK)
   {
@@ -461,6 +530,26 @@ static void MX_TIM2_Init(void)
   /* USER CODE BEGIN TIM2_Init 2 */
 
   /* USER CODE END TIM2_Init 2 */
+
+}
+
+/**
+  * Enable DMA controller clock
+  */
+static void MX_DMA_Init(void)
+{
+
+  /* DMA controller clock enable */
+  __HAL_RCC_DMAMUX1_CLK_ENABLE();
+  __HAL_RCC_DMA1_CLK_ENABLE();
+
+  /* DMA interrupt init */
+  /* DMA1_Channel1_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Channel1_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Channel1_IRQn);
+  /* DMA1_Channel2_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Channel2_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Channel2_IRQn);
 
 }
 
@@ -478,16 +567,17 @@ static void MX_GPIO_Init(void)
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
+  __HAL_RCC_GPIOE_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, GPIO_PIN_RESET);
 
-  /*Configure GPIO pin : BUTTON_Pin */
-  GPIO_InitStruct.Pin = BUTTON_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  /*Configure GPIO pin : PIN_BUTTON_Pin */
+  GPIO_InitStruct.Pin = PIN_BUTTON_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(BUTTON_GPIO_Port, &GPIO_InitStruct);
+  HAL_GPIO_Init(PIN_BUTTON_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pin : LED_Pin */
   GPIO_InitStruct.Pin = LED_Pin;
@@ -496,19 +586,23 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(LED_GPIO_Port, &GPIO_InitStruct);
 
+  /* EXTI interrupt init*/
+  HAL_NVIC_SetPriority(EXTI15_10_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);
+
 /* USER CODE BEGIN MX_GPIO_Init_2 */
 /* USER CODE END MX_GPIO_Init_2 */
 }
 
 /* USER CODE BEGIN 4 */
 /**
-  * @brief  Interrupt handler for TIM2; toggles LED.
-  * @retval None
-  */
+ * @brief  Interrupt handler for TIM2; toggles LED.
+ * @retval None
+ */
 
-void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
-	HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
-}
+// void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
+//	HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
+// }
 /* USER CODE END 4 */
 
 /**
